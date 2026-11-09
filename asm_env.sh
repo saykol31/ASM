@@ -262,6 +262,24 @@ install_valgrind() {
 # Llamar a las funciones de instalación
 install_valgrind
 
+# Función para verificar si `fasm` está instalado e instalarlo si no lo está
+install_fasm() {
+    if command -v fasm &>/dev/null; then
+        echo -e "${GREEN}✔ fasm ya está instalado.${NC}"
+    else
+        echo -e "${YELLOW}fasm no está instalado. Instalando...${NC}"
+        sudo apt update && sudo apt install -y fasm
+        if [[ $? -eq 0 ]]; then
+            echo -e "${GREEN}✔ fasm se instaló correctamente.${NC}"
+        else
+            echo -e "${RED}✘ Error al instalar fasm. Verifica los permisos o la conexión a internet.${NC}"
+        fi
+    fi
+}
+
+# Llamar a la función de instalación de fasm
+install_fasm
+
 
 echo ""
 echo -e "${MAGENTA} --> Dependencias Satisfechas .${NC}"
@@ -285,6 +303,7 @@ echo -e "${NC}"
 echo -e "${MAGENTA} Ensamblador independiente: ${NC}"
 #echo " • nasm → ensamblador Intel Syntax (NASM: Netwide Assembler):"
 echo "   $(check_version nasm "nasm -v")"
+echo "   $(check_version fasm "fasm")"
 
 
 # === Binutils ===
@@ -339,9 +358,16 @@ fi
 # Variables de estado
 FORMAT="elf64"
 LD_FLAGS=""
-DOS_MODE=false
+FREEDOS_MODE=false
 KOLIBRIOS_MODE=false
 TARGET_NAME="Linux x86-64"
+
+# Ensamblador activo: "nasm" (por defecto) o "fasm".
+# Con NASM el formato lo impone la opción -f del script;
+# con FASM lo declara la propia fuente (format ELF64,
+# format binary...), como manda FASM.
+ASSEMBLER="nasm"
+ASSEMBLER_NAME="NASM"
 
 ASM_FILE=""
 OBJ_FILE=""
@@ -365,9 +391,38 @@ KOLIBRIOS_IMAGE=""
 # Memoria para QEMU
 KOLIBRIOS_QEMU_MEM=256
 
+# Imagen persistente de KolibriOS (la que arranca QEMU).
+# PORTABILIDAD: esto es CONFIGURACIÓN de cada máquina,
+# no código — ajusta la ruta en cada equipo. Por defecto,
+# la carpeta de máquinas de VirtualBox del usuario actual.
+KOLIBRIOS_IMAGE_PERSISTENTE="$HOME/VirtualBox VMs/kolibriOS/KPP-KOLIBRI.img"
+
+# Casa del entorno: los scripts hermanos viven aquí.
+ASM_HOME="$HOME/ASM"
+
+
+# ============================================================================
+# CONFIGURACIÓN FREEDOS
+# ============================================================================
+
+FREEDOS_DIR="$HOME/ASM/freedos_test"
+
+# Imagen de disquete BOOTABLE de FreeDOS (plantilla).
+# Se prepara una sola vez: debe contener KERNEL.SYS y
+# COMMAND.COM de FreeDOS (la imagen oficial de disquete
+# de FreeDOS sirve tal cual).
+FREEDOS_TEMPLATE="$FREEDOS_DIR/freedos.img"
+
+# Imagen de trabajo generada en cada ejecución
+FREEDOS_IMAGE=""
+
+# Memoria para QEMU (FreeDOS es ligero)
+FREEDOS_QEMU_MEM=32
+
 
 
 mkdir -p "$WORKDIR"
+mkdir -p "$FREEDOS_DIR"
 cd "$WORKDIR" || exit 1
 
 
@@ -395,6 +450,7 @@ function elegir_formato() {
     echo "1) Linux x86-32       → ELF32"
     echo "2) Linux x86-64       → ELF64"
     echo "3) KolibriOS x86      → BIN"
+    echo "4) FreeDOS            → COM"
     echo ""
 
     read -p "Opción: " formato_op
@@ -404,7 +460,7 @@ function elegir_formato() {
         1)
             FORMAT="elf32"
             LD_FLAGS="-m elf_i386"
-            DOS_MODE=false
+            FREEDOS_MODE=false
             KOLIBRIOS_MODE=false
             TARGET_NAME="Linux x86-32"
             ;;
@@ -412,7 +468,7 @@ function elegir_formato() {
         2)
             FORMAT="elf64"
             LD_FLAGS=""
-            DOS_MODE=false
+            FREEDOS_MODE=false
             KOLIBRIOS_MODE=false
             TARGET_NAME="Linux x86-64"
             ;;
@@ -420,9 +476,17 @@ function elegir_formato() {
         3)
             FORMAT="bin"
             LD_FLAGS=""
-            DOS_MODE=false
+            FREEDOS_MODE=false
             KOLIBRIOS_MODE=true
             TARGET_NAME="KolibriOS x86"
+            ;;
+
+        4)
+            FORMAT="bin"
+            LD_FLAGS=""
+            FREEDOS_MODE=true
+            KOLIBRIOS_MODE=false
+            TARGET_NAME="FreeDOS (.COM)"
             ;;
 
         *)
@@ -432,7 +496,7 @@ function elegir_formato() {
 
             FORMAT="elf64"
             LD_FLAGS=""
-            DOS_MODE=false
+            FREEDOS_MODE=false
             KOLIBRIOS_MODE=false
             TARGET_NAME="Linux x86-64"
             ;;
@@ -449,6 +513,60 @@ function elegir_formato() {
 # ============================================================================
 #
 # ============================================================================
+
+# ============================================================================
+# ELEGIR ENSAMBLADOR (NASM por defecto / FASM)
+# ============================================================================
+
+function elegir_ensamblador() {
+
+    clear
+
+    echo -e "${CYAN}"
+    echo " ╔======================================================================╗"
+    echo " ║                                                                      ║"
+    echo " ║                 Mini entorno ASM - ENSAMBLADOR                      ║"
+    echo " ║                                                                      ║"
+    echo " ╚======================================================================╝"
+    echo -e "${NC}"
+
+    echo ""
+    echo -e "${MAGENTA} Ensamblador actual: ${NC} $ASSEMBLER_NAME"
+    echo ""
+    echo "1) NASM (por defecto)"
+    echo "2) FASM"
+    echo ""
+
+    read -p "Opción: " ensamblador_op
+
+    case "$ensamblador_op" in
+
+        1)
+            ASSEMBLER="nasm"
+            ASSEMBLER_NAME="NASM"
+            ;;
+
+        2)
+            ASSEMBLER="fasm"
+            ASSEMBLER_NAME="FASM"
+            ;;
+
+        *)
+            echo ""
+            echo -e "${YELLOW}Opción inválida. Se conserva $ASSEMBLER_NAME.${NC}"
+            ;;
+    esac
+
+    echo ""
+    echo -e "${GREEN}✔ Ensamblador activo:${NC} $ASSEMBLER_NAME"
+    if [[ "$ASSEMBLER" == "fasm" ]]; then
+        echo "Con FASM el formato lo declara la fuente"
+        echo "(format ELF64, format binary...), no el script."
+    fi
+    echo ""
+
+    read -p "Presiona ENTER para continuar..."
+}
 
 function mover_bin_kolibrios() {
 
@@ -560,9 +678,10 @@ function mover_bin_kolibrios() {
 
     # ============================================================
     # IMAGEN KOLIBRIOS PERSISTENTE
+    # (ruta en la CONFIGURACIÓN de cabecera)
     # ============================================================
 
-    KOLIBRIOS_IMAGE="/home/saykol/VirtualBox VMs/kolibriOS/KPP-KOLIBRI.img"
+    KOLIBRIOS_IMAGE="$KOLIBRIOS_IMAGE_PERSISTENTE"
 
     # ============================================================
     # PARTICIÓN FAT32
@@ -868,9 +987,10 @@ function mover_file_kolibrios() {
 
     # ============================================================
     # IMAGEN PERSISTENTE
+    # (ruta en la CONFIGURACIÓN de cabecera)
     # ============================================================
 
-    KOLIBRIOS_IMAGE="/home/saykol/VirtualBox VMs/kolibriOS/KPP-KOLIBRI.img"
+    KOLIBRIOS_IMAGE="$KOLIBRIOS_IMAGE_PERSISTENTE"
 
     KOLIBRIOS_OFFSET=$((2048 * 512))
 
@@ -1029,6 +1149,246 @@ function mover_file_kolibrios() {
     read -rp "Presiona ENTER para continuar..."
 }
 
+
+# ============================================================================
+# EJECUTAR EN FREEDOS (imagen plantilla + AUTOEXEC + QEMU)
+# ============================================================================
+
+function ejecutar_freedos() {
+
+    clear
+
+    echo -e "${CYAN}"
+    echo " ╔======================================================================╗"
+    echo " ║                                                                      ║"
+    echo " ║                 COM → FREEDOS                                       ║"
+    echo " ║                                                                      ║"
+    echo " ╚======================================================================╝"
+    echo -e "${NC}"
+
+    if [[ "$FREEDOS_MODE" != true ]]; then
+        echo -e "${RED}ERROR:${NC} El target actual no es FreeDOS."
+        echo
+        read -rp "Presiona ENTER para continuar..."
+        return
+    fi
+
+    if [[ -z "$ASM_FILE" ]]; then
+        echo -e "${RED}ERROR:${NC} No hay archivo ASM seleccionado."
+        echo
+        read -rp "Presiona ENTER para continuar..."
+        return
+    fi
+
+    nombre="${ASM_FILE%.*}"
+
+    COM_FILE="$WORKDIR/${nombre}.com"
+
+    if [[ ! -f "$COM_FILE" ]]; then
+        echo -e "${RED}ERROR:${NC} No existe el .COM:"
+        echo
+        echo "  $COM_FILE"
+        echo
+        echo "Primero ejecuta la opción 2."
+        echo
+        read -rp "Presiona ENTER para continuar..."
+        return
+    fi
+
+    # ============================================================
+    # COMPROBAR HERRAMIENTAS
+    # ============================================================
+
+    for cmd in mcopy mdir mtype qemu-system-i386; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            echo -e "${RED}ERROR:${NC} Falta el comando: $cmd"
+            echo
+            echo "Instálalo con:"
+            echo
+            echo "  sudo apt install mtools qemu-system-x86"
+            echo
+            read -rp "Presiona ENTER para continuar..."
+            return
+        fi
+    done
+
+    # ============================================================
+    # NOMBRE 8.3 (misma regla que KolibriOS)
+    # ============================================================
+
+    FD_NAME="$(basename "$nombre")"
+
+    FD_NAME="$(printf '%s' "$FD_NAME" | \
+        tr '[:lower:]' '[:upper:]')"
+
+    FD_NAME="$(printf '%s' "$FD_NAME" | \
+        sed 's/[^A-Z0-9_$-]/_/g')"
+
+    if [[ ${#FD_NAME} -gt 8 ]]; then
+
+        suma=$(printf '%s' "$nombre" | cksum | awk '{print $1}')
+        sufijo=$(printf '%02X' $((suma % 256)))
+
+        FD_NAME="${FD_NAME:0:6}${sufijo}"
+
+    fi
+
+    # ============================================================
+    # IMAGEN DE TRABAJO DESDE LA PLANTILLA
+    # (disquete FAT12: sin offset de partición)
+    # ============================================================
+
+    if [[ ! -f "$FREEDOS_TEMPLATE" ]]; then
+        echo -e "${RED}ERROR:${NC} No existe la imagen plantilla de FreeDOS:"
+        echo
+        echo "  $FREEDOS_TEMPLATE"
+        echo
+        echo "Prepárala una sola vez: un disquete BOOTABLE de"
+        echo "FreeDOS con KERNEL.SYS y COMMAND.COM (la imagen"
+        echo "oficial de disquete de FreeDOS sirve tal cual),"
+        echo "guardado con ese nombre."
+        echo
+        read -rp "Presiona ENTER para continuar..."
+        return
+    fi
+
+    FREEDOS_IMAGE="$FREEDOS_DIR/freedos_${FD_NAME}_auto.img"
+
+    cp -f "$FREEDOS_TEMPLATE" "$FREEDOS_IMAGE"
+
+    if [[ $? -ne 0 ]]; then
+        echo -e "${RED}ERROR:${NC} No se pudo crear la imagen de trabajo."
+        echo
+        read -rp "Presiona ENTER para continuar..."
+        return
+    fi
+
+    echo "======================================================================"
+    echo " PREPARANDO FREEDOS"
+    echo "======================================================================"
+    echo
+    echo "COM:"
+    echo "  $COM_FILE"
+    echo
+    echo "Nombre dentro de FreeDOS:"
+    echo "  ${FD_NAME}.COM"
+    echo
+    echo "Imagen de trabajo:"
+    echo "  $FREEDOS_IMAGE"
+    echo
+
+    # ============================================================
+    # 1. COPIAR EL .COM A LA IMAGEN
+    # ============================================================
+
+    echo "1. Copiando el .COM a la imagen..."
+
+    mcopy -o \
+        -i "$FREEDOS_IMAGE" \
+        "$COM_FILE" \
+        "::${FD_NAME}.COM"
+
+    if [[ $? -ne 0 ]]; then
+        echo -e "${RED}ERROR:${NC} No se pudo copiar el .COM."
+        echo
+        read -rp "Presiona ENTER para continuar..."
+        return
+    fi
+
+    echo "✔ COM incorporado."
+    echo
+
+    # ============================================================
+    # 2. AUTOEXEC.BAT: EXTRAER (O CREAR) Y AÑADIR EL PROGRAMA
+    # ============================================================
+
+    echo "2. Preparando AUTOEXEC.BAT..."
+
+    AUTOEXEC_TMP="$FREEDOS_DIR/AUTOEXEC_${FD_NAME}_tmp.BAT"
+
+    rm -f "$AUTOEXEC_TMP"
+
+    if ! mcopy \
+        -i "$FREEDOS_IMAGE" \
+        "::AUTOEXEC.BAT" \
+        "$AUTOEXEC_TMP" 2>/dev/null; then
+
+        # La plantilla puede no traer AUTOEXEC.BAT: se crea.
+        : > "$AUTOEXEC_TMP"
+
+    fi
+
+    # Normalizar CRLF por seguridad.
+    sed -i 's/\r$//' "$AUTOEXEC_TMP"
+
+    if ! grep -Fqx "$FD_NAME" "$AUTOEXEC_TMP"; then
+
+        if ! grep -Fqx 'REM ### Mini Entorno ASM ###' "$AUTOEXEC_TMP"; then
+            printf 'REM ### Mini Entorno ASM ###\r\n' >> "$AUTOEXEC_TMP"
+        fi
+
+        printf '%s\r\n' "$FD_NAME" >> "$AUTOEXEC_TMP"
+
+        echo "✔ AUTOEXEC configurado."
+
+    else
+
+        echo "✔ El programa ya estaba en AUTOEXEC.BAT."
+
+    fi
+
+    mcopy -o \
+        "$AUTOEXEC_TMP" \
+        -i "$FREEDOS_IMAGE" \
+        "::AUTOEXEC.BAT"
+
+    if [[ $? -ne 0 ]]; then
+        echo -e "${RED}ERROR:${NC} No se pudo escribir AUTOEXEC.BAT."
+        rm -f "$AUTOEXEC_TMP"
+        echo
+        read -rp "Presiona ENTER para continuar..."
+        return
+    fi
+
+    rm -f "$AUTOEXEC_TMP"
+
+    echo "✔ AUTOEXEC.BAT actualizado."
+    echo
+
+    # ============================================================
+    # 3. VERIFICAR Y ARRANCAR QEMU
+    # ============================================================
+
+    echo "3. Contenido del disquete:"
+    echo
+
+    mdir -i "$FREEDOS_IMAGE" "::"
+
+    echo
+    echo "======================================================================"
+    echo " FREEDOS LISTO"
+    echo "======================================================================"
+    echo
+    echo "El programa ${FD_NAME}.COM se ejecutará al arrancar."
+    echo
+
+    read -rp "Presiona ENTER para arrancar FreeDOS en QEMU..."
+
+    qemu-system-i386 \
+        -enable-kvm \
+        -cpu host \
+        -m "$FREEDOS_QEMU_MEM" \
+        -drive "file=${FREEDOS_IMAGE},format=raw,if=floppy" \
+        -boot a \
+        -display gtk
+
+    echo
+    echo "QEMU finalizado."
+    echo
+
+    read -rp "Presiona ENTER para continuar..."
+}
+
 function menu() {
 
     clear
@@ -1044,6 +1404,7 @@ function menu() {
     echo -e "\e[1;34mArchivo:\e[0m \e[1;32m${ASM_FILE:-<ninguno>}\e[0m"
     echo -e "\e[1;34mTarget :\e[0m \e[1;32m${TARGET_NAME:-Linux x86-64}\e[0m"
     echo -e "\e[1;34mFormato:\e[0m \e[1;32m${FORMAT:-elf64}\e[0m"
+    echo -e "\e[1;34mEnsambl:\e[0m \e[1;32m${ASSEMBLER_NAME:-NASM}\e[0m"
     echo -e "\e[1;34mRuta   :\e[0m \e[1;32m$WORKDIR\e[0m"
 
     echo "===================================================="
@@ -1056,6 +1417,7 @@ function menu() {
     echo "7) Cambiar formato / target"
     echo "8) Mover BIN → KolibriOS"
     echo "9) Mover FILE → KolibriOS"
+    echo "10) Cambiar ensamblador (NASM/FASM)"
     echo "0) Salir"
     echo "===================================================="
 
@@ -1155,7 +1517,11 @@ while true; do
                 # IMPORTANTE:
                 # KolibriOS utiliza una imagen binaria plana.
                 # No se usa ELF, .o ni ld.
-                nasm -f bin "$ASM_FILE" -o "$KOLIBRIOS_FILE"
+                if [[ "$ASSEMBLER" == "fasm" ]]; then
+                    fasm "$ASM_FILE" "$KOLIBRIOS_FILE"
+                else
+                    nasm -f bin "$ASM_FILE" -o "$KOLIBRIOS_FILE"
+                fi
 
                 if [[ $? -eq 0 ]]; then
 
@@ -1185,15 +1551,19 @@ while true; do
                 fi
 
             # ================================================================
-            # DOS
+            # FREEDOS
             # ================================================================
 
-            elif [[ "$DOS_MODE" == true ]]; then
+            elif [[ "$FREEDOS_MODE" == true ]]; then
 
-                echo "Generando ejecutable DOS .COM..."
+                echo "Generando ejecutable FreeDOS .COM..."
                 echo ""
 
-                nasm -f bin "$ASM_FILE" -o "${nombre}.com"
+                if [[ "$ASSEMBLER" == "fasm" ]]; then
+                    fasm "$ASM_FILE" "${nombre}.com"
+                else
+                    nasm -f bin "$ASM_FILE" -o "${nombre}.com"
+                fi
 
                 if [[ $? -eq 0 ]]; then
 
@@ -1205,7 +1575,7 @@ while true; do
                 else
 
                     echo ""
-                    echo -e "${RED}✘ Error en compilación DOS.${NC}"
+                    echo -e "${RED}✘ Error en compilación FreeDOS.${NC}"
                     echo ""
 
                 fi
@@ -1216,7 +1586,11 @@ while true; do
 
             else
 
-                nasm -f "$FORMAT" "$ASM_FILE" -o "$OBJ_FILE"
+                if [[ "$ASSEMBLER" == "fasm" ]]; then
+                    fasm "$ASM_FILE" "$OBJ_FILE"
+                else
+                    nasm -f "$FORMAT" "$ASM_FILE" -o "$OBJ_FILE"
+                fi
 
                 if [[ $? -eq 0 ]]; then
 
@@ -1260,10 +1634,11 @@ while true; do
                 echo "El archivo generado por NASM ya es el BIN final."
                 echo ""
 
-            elif [[ "$DOS_MODE" == true ]]; then
+            elif [[ "$FREEDOS_MODE" == true ]]; then
 
                 echo ""
-                echo "El formato DOS .COM tampoco requiere enlazador."
+                echo "El formato FreeDOS .COM tampoco requiere enlazador."
+                echo "El .COM generado ya es el ejecutable final."
                 echo ""
 
             elif [[ -f "$OBJ_FILE" ]]; then
@@ -1350,43 +1725,12 @@ while true; do
                 fi
 
             # ================================================================
-            # DOS
+            # FREEDOS
             # ================================================================
 
-            elif [[ "$DOS_MODE" == true ]]; then
+            elif [[ "$FREEDOS_MODE" == true ]]; then
 
-                if [[ -n "$ASM_FILE" ]]; then
-                    nombre="${ASM_FILE%.*}"
-                fi
-
-                if [[ -f "$WORKDIR/${nombre}.com" ]]; then
-
-                    if [[ -n "$DOSBOX_PATH" && -f "$DOSBOX_PATH" ]]; then
-
-                        echo "Ejecutando en DOSBox: ${nombre}.com"
-
-                        (
-                            cd "$WORKDIR" || exit
-                            nohup wine "$DOSBOX_PATH" \
-                                -c "mount c $WORKDIR" \
-                                -c "c:" \
-                                -c "${nombre}.com" \
-                                >/dev/null 2>&1 &
-                        )
-
-                    else
-
-                        echo "No se encontró DOSBox en:"
-                        echo "  ${DOSBOX_PATH:-<DOSBOX_PATH no configurado>}"
-
-                    fi
-
-                else
-
-                    echo "No se encontró:"
-                    echo "  $WORKDIR/${nombre}.com"
-
-                fi
+                ejecutar_freedos
 
             # ================================================================
             # LINUX ELF
@@ -1474,10 +1818,10 @@ while true; do
 
         5)
 
-            if [[ -f "/home/saykol/ASM/reverse.sh" ]]; then
-                bash "/home/saykol/ASM/reverse.sh"
+            if [[ -f "$ASM_HOME/reverse.sh" ]]; then
+                bash "$ASM_HOME/reverse.sh"
             else
-                echo "No se encontró reverse.sh en /home/saykol/ASM/"
+                echo "No se encontró reverse.sh en $ASM_HOME/"
             fi
 
             read -p "Presiona ENTER para continuar..."
@@ -1537,6 +1881,14 @@ while true; do
         9)
 
             mover_file_kolibrios
+            ;;
+
+        # ====================================================================
+        # 10) CAMBIAR ENSAMBLADOR
+        # ====================================================================
+        10)
+
+            elegir_ensamblador
             ;;
 
         # ====================================================================
