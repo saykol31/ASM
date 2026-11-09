@@ -1,0 +1,11 @@
+# Generados y material de terceros: fuera del repo
+*.img
+*.iso
+*.o
+*.com
+*.bin
+*.zip
+kolibri_test/kolibri_iso_work/
+Binarios/
+*.exe
+*.dll

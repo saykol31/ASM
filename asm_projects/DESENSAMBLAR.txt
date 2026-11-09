@@ -1,0 +1,163 @@
+2. confirmar la estructura del .bin
+
+cd /home/saykol/C/KPP/Output
+
+ls -l allocator_stress.bin allocator_stress.raw
+
+xxd -g 1 -l 64 allocator_stress.bin
+
+3. extraer el código
+
+dd if=allocator_stress.bin \
+   of=/tmp/kpp-allocator-stress-code.bin \
+   bs=1 \
+   skip=36 \
+   status=none
+
+4. Desensamblar
+
+objdump -D \
+   -b binary \
+   -m i386 \
+   /tmp/kpp-allocator-stress-code.bin
+
+
+   5. Comprobación rápida de los saltos
+
+También puedes ejecutar directamente:
+
+objdump -D \
+   -b binary \
+   -m i386 \
+   /tmp/kpp-code.bin |
+grep -E 'cmp.*%eax|je |jne |div |int.*0x40'
+
+
+inspeccionar los encabezados MENUET01 de ambos:
+
+cd /home/saykol/C/KPP
+
+echo "=== arithmetic.bin ==="
+xxd -g 1 -l 36 Output/arithmetic.bin
+
+echo
+echo "=== hello.bin ==="
+xxd -g 1 -l 36 Output/hello.bin
+
+
+inspección completa y ordenada de ambos BIN: encabezado, código, datos, cadenas y diferencias byte por byte.
+
+1. Información general
+cd /home/saykol/C/KPP
+
+echo "=========================================="
+echo " ARITHMETIC.BIN"
+echo "=========================================="
+ls -lh Output/arithmetic.bin
+stat Output/arithmetic.bin
+
+echo
+echo "=========================================="
+echo " HELLO.BIN"
+echo "=========================================="
+ls -lh Output/hello.bin
+stat Output/hello.bin
+2. Volcado hexadecimal completo de arithmetic.bin
+echo
+echo "=========================================="
+echo " HEXDUMP: arithmetic.bin"
+echo "=========================================="
+
+xxd -g 1 Output/arithmetic.bin
+3. Volcado hexadecimal completo de hello.bin
+echo
+echo "=========================================="
+echo " HEXDUMP: hello.bin"
+echo "=========================================="
+
+xxd -g 1 Output/hello.bin
+4. Código x86 completo de ambos
+
+Como los primeros 36 bytes son el header MENUET01, extraemos exactamente desde ahí:
+
+cd /home/saykol/C/KPP
+
+dd if=Output/arithmetic.bin \
+   of=/tmp/arithmetic-code.bin \
+   bs=1 skip=36 \
+   status=none
+
+dd if=Output/hello.bin \
+   of=/tmp/hello-code.bin \
+   bs=1 skip=36 \
+   status=none
+
+
+Ahora:
+
+echo
+echo "=========================================="
+echo " X86: arithmetic.bin"
+echo "=========================================="
+
+objdump -D \
+   -b binary \
+   -m i386 \
+   /tmp/arithmetic-code.bin
+
+Y:
+
+echo
+echo "=========================================="
+echo " X86: hello.bin"
+echo "=========================================="
+
+objdump -D \
+   -b binary \
+   -m i386 \
+   /tmp/hello-code.bin
+5. Ver las cadenas legibles
+
+Esto es muy útil porque nos permite localizar claramente la zona de DATA:
+
+echo
+echo "=========================================="
+echo " STRINGS: arithmetic.bin"
+echo "=========================================="
+
+strings -t x Output/arithmetic.bin
+echo
+echo "=========================================="
+echo " STRINGS: hello.bin"
+echo "=========================================="
+
+strings -t x Output/hello.bin
+6. Comparación directa
+echo
+echo "=========================================="
+echo " SHA256"
+echo "=========================================="
+
+sha256sum \
+    Output/arithmetic.bin \
+    Output/hello.bin
+
+Y una comparación binaria:
+
+echo
+echo "=========================================="
+echo " DIFERENCIAS BYTE A BYTE"
+echo "=========================================="
+
+cmp -l \
+    Output/arithmetic.bin \
+    Output/hello.bin
+7. La comparación más interesante: hexdump lado a lado
+echo
+echo "=========================================="
+echo " COMPARACION HEX"
+echo "=========================================="
+
+diff -u \
+    <(xxd -g 1 Output/arithmetic.bin) \
+    <(xxd -g 1 Output/hello.bin)
