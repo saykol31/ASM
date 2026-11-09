@@ -373,14 +373,21 @@ ASM_FILE=""
 OBJ_FILE=""
 EXE_FILE=""
 KOLIBRIOS_FILE=""
-WORKDIR="$HOME/ASM/asm_projects"
+# Casa del entorno: TODAS las rutas del script cuelgan
+# de esta única variable. Por defecto vale $HOME/ASM (la
+# MX); en una máquina con otra disposición se sobrescribe
+# desde el ENTORNO, sin tocar el código ni ensuciar git:
+#   export ASM_HOME="$HOME/Home/ASM"   (en el .bashrc)
+ASM_HOME="${ASM_HOME:-$HOME/ASM}"
+
+WORKDIR="$ASM_HOME/asm_projects"
 
 
 # ============================================================================
 # CONFIGURACIÓN KOLIBRIOS
 # ============================================================================
 
-KOLIBRIOS_DIR="$HOME/ASM/kolibri_test"
+KOLIBRIOS_DIR="$ASM_HOME/kolibri_test"
 
 # Imagen limpia/original de KolibriOS
 KOLIBRIOS_TEMPLATE="$KOLIBRIOS_DIR/kolibri.img"
@@ -397,15 +404,11 @@ KOLIBRIOS_QEMU_MEM=256
 # la carpeta de máquinas de VirtualBox del usuario actual.
 KOLIBRIOS_IMAGE_PERSISTENTE="$HOME/VirtualBox VMs/kolibriOS/KPP-KOLIBRI.img"
 
-# Casa del entorno: los scripts hermanos viven aquí.
-ASM_HOME="$HOME/ASM"
-
-
 # ============================================================================
 # CONFIGURACIÓN FREEDOS
 # ============================================================================
 
-FREEDOS_DIR="$HOME/ASM/freedos_test"
+FREEDOS_DIR="$ASM_HOME/freedos_test"
 
 # Imagen de disquete BOOTABLE de FreeDOS (plantilla).
 # Se prepara una sola vez: debe contener KERNEL.SYS y
@@ -1151,7 +1154,7 @@ function mover_file_kolibrios() {
 
 
 # ============================================================================
-# EJECUTAR EN FREEDOS (imagen plantilla + AUTOEXEC + QEMU)
+# EJECUTAR EN FREEDOS (imagen plantilla + FDAUTO + QEMU)
 # ============================================================================
 
 function ejecutar_freedos() {
@@ -1299,60 +1302,60 @@ function ejecutar_freedos() {
     echo
 
     # ============================================================
-    # 2. AUTOEXEC.BAT: EXTRAER (O CREAR) Y AÑADIR EL PROGRAMA
+    # 2. FDAUTO.BAT: EXTRAER (O CREAR) Y AÑADIR EL PROGRAMA
     # ============================================================
 
-    echo "2. Preparando AUTOEXEC.BAT..."
+    echo "2. Preparando FDAUTO.BAT..."
 
-    AUTOEXEC_TMP="$FREEDOS_DIR/AUTOEXEC_${FD_NAME}_tmp.BAT"
+    FDAUTO_TMP="$FREEDOS_DIR/FDAUTO_${FD_NAME}_tmp.BAT"
 
-    rm -f "$AUTOEXEC_TMP"
+    rm -f "$FDAUTO_TMP"
 
     if ! mcopy \
         -i "$FREEDOS_IMAGE" \
-        "::AUTOEXEC.BAT" \
-        "$AUTOEXEC_TMP" 2>/dev/null; then
+        "::FDAUTO.BAT" \
+        "$FDAUTO_TMP" 2>/dev/null; then
 
-        # La plantilla puede no traer AUTOEXEC.BAT: se crea.
-        : > "$AUTOEXEC_TMP"
+        # La plantilla puede no traer FDAUTO.BAT: se crea.
+        : > "$FDAUTO_TMP"
 
     fi
 
     # Normalizar CRLF por seguridad.
-    sed -i 's/\r$//' "$AUTOEXEC_TMP"
+    sed -i 's/\r$//' "$FDAUTO_TMP"
 
-    if ! grep -Fqx "$FD_NAME" "$AUTOEXEC_TMP"; then
+    if ! grep -Fqx "$FD_NAME" "$FDAUTO_TMP"; then
 
-        if ! grep -Fqx 'REM ### Mini Entorno ASM ###' "$AUTOEXEC_TMP"; then
-            printf 'REM ### Mini Entorno ASM ###\r\n' >> "$AUTOEXEC_TMP"
+        if ! grep -Fqx 'REM ### Mini Entorno ASM ###' "$FDAUTO_TMP"; then
+            printf 'REM ### Mini Entorno ASM ###\r\n' >> "$FDAUTO_TMP"
         fi
 
-        printf '%s\r\n' "$FD_NAME" >> "$AUTOEXEC_TMP"
+        printf '%s\r\n' "$FD_NAME" >> "$FDAUTO_TMP"
 
-        echo "✔ AUTOEXEC configurado."
+        echo "✔ FDAUTO configurado."
 
     else
 
-        echo "✔ El programa ya estaba en AUTOEXEC.BAT."
+        echo "✔ El programa ya estaba en FDAUTO.BAT."
 
     fi
 
     mcopy -o \
-        "$AUTOEXEC_TMP" \
+        "$FDAUTO_TMP" \
         -i "$FREEDOS_IMAGE" \
-        "::AUTOEXEC.BAT"
+        "::FDAUTO.BAT"
 
     if [[ $? -ne 0 ]]; then
-        echo -e "${RED}ERROR:${NC} No se pudo escribir AUTOEXEC.BAT."
-        rm -f "$AUTOEXEC_TMP"
+        echo -e "${RED}ERROR:${NC} No se pudo escribir FDAUTO.BAT."
+        rm -f "$FDAUTO_TMP"
         echo
         read -rp "Presiona ENTER para continuar..."
         return
     fi
 
-    rm -f "$AUTOEXEC_TMP"
+    rm -f "$FDAUTO_TMP"
 
-    echo "✔ AUTOEXEC.BAT actualizado."
+    echo "✔ FDAUTO.BAT actualizado."
     echo
 
     # ============================================================
